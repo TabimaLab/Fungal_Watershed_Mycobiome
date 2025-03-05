@@ -1,0 +1,967 @@
+---
+title: "Wheeler's paper"
+output: github_document
+---
+
+# Reading in data and subsetting per source:
+
+```{r}
+ps_ww <- readRDS("phyloseq.RDS")
+
+ps.water <- subset_samples(ps_ww, SampleType=="Water")
+ps.sediment <- subset_samples(ps_ww, SampleType=="Sediment")
+ps.fecal <- subset_samples(ps_ww, SampleType=="Fecal")
+```
+
+# Rarefaction curve
+```{r}
+tab <- otu_table(ps_ww)
+class(tab) <- "matrix"
+tab <- t(tab) #transpose observations to rows
+rarecurve(t(tab), step=50, cex=0.5,)
+#trimmed PR51J.raw, otherwise looks good 
+```
+
+# PISA distribution histograms-- PISA cutoffs 
+```{r}
+#Histograms to see sample distributions along PISA to create discrete groups 
+hist(ps.fecal@sam_data$PISA, breaks = 10, main = 'Fecal Sample Distribution Across PISA' , xlab = 'PISA')
+hist(ps.sediment@sam_data$PISA, breaks = 30, main = 'Sediment Sample Distribution Across PISA' , xlab = 'PISA')
+hist(ps.water@sam_data$PISA, breaks = 10, main = 'Water Sample Distribution Across PISA' , xlab = 'PISA', col = 'blue')
+```
+
+
+***
+
+# Diversity analysis
+
+## Alpha Diversity
+
+### Diversity Indices Plots-- all sources
+
+```{r}
+#Richness plots of data, can choose alpha diversity index and grouping variable 
+plot_richness(ps_ww, x="SampleType", measures=c("Observed", "Shannon", "Simpson")) + geom_boxplot()
+richness = estimate_richness(ps_ww@otu_table, measures = "Observed") #creates a dataframe with calculated alpha diversity estimates for each sample
+```
+
+### Shannons index- ALL sources 
+```{r}
+#test assumptions of ANOVA 
+#test for equality of variance of the residuals-- for urb. and sample type analyses 
+bartlett.test(residuals(aov(data_shannon~SampleType, data=ps_shan)), ps_shan$SampleType)
+bartlett.test(residuals(aov(data_shannon~Urbanization, data=ps_shan)), ps_shan$Urbanization)
+#variances are equal -- cannot reject null 
+
+#test for normality of distribution of the residuals 
+shapiro.test(residuals(aov(data_shannon~SampleType, data=ps_shan))) #reject null-- look at qq plot 
+qqnorm(residuals(aov(data_shannon~SampleType, data=ps_shan))) #looks pretty normally distributed 
+qqline(residuals(aov(data_shannon~SampleType, data=ps_shan)))
+
+shapiro.test(residuals(aov(data_shannon~Urbanization, data=ps_shan))) #cannot reject null 
+
+#ANOVA and LM tests 
+anova_sampletype <- aov(data_shannon~SampleType, data=ps_shan)#ANOVA for alpha diversity between sample types 
+anova_urb_all <- aov(data_shannon~Urbanization, data=ps_shan) #ANOVA for alpha diversity between urb. levels 
+lm(data_shannon~PISA, data = ps_shan) %>% summary()  # All data--linear model of shannons index versus PISA- SIG
+
+
+#Pairwise t.tests 
+pairwise.t.test(ps_shan$data_shannon, ps_shan$Urbanization, p.adjust.method = "BH", pool.sd = T, paired = F, alternative = "two.sided") #each is sig. 
+TukeyHSD(anova_sampletype, conf.level=.95)
+
+pairwise.t.test(ps_shan$data_shannon, ps_shan$SampleType, p.adjust.method = "BH", pool.sd = T, paired = F, alternative = "two.sided") #water and fecal not sig. different 
+TukeyHSD(anova_urb_all, conf.level=.95)
+
+
+ggplot(ps_shan, aes(x = SampleType, y = data_shannon)) + theme_classic() + ylab('Shannon Index') + xlab('Source') + geom_boxplot() #boxplot comapring shannon d across sample types 
+ggplot(ps_shan, aes(x = Urbanization, y = data_shannon)) + theme_classic() + ylab('Shannon Index') + xlab('Urbanization Level') + geom_boxplot() #boxplot comapring shannon d across urb. levels- all samples 
+
+ps_shan %>% mutate(PISA = fct_relevel(PISA, "Low", "Medium", "High")) %>% ggplot(aes(x=PISA, y=data_shannon)) +
+  geom_point() + geom_smooth(method=lm , color="red", se=FALSE) + ylab('Shannon Index') + theme_classic() 
+
+```
+
+### Simpson index- ALL sources 
+```{r}
+
+#ANOVA and LM test- source + urbanization
+aov(data_simpson~Urbanization, data=ps_simp) %>% summary() #not significant 
+
+anova_sampletype_simp <- aov(data_simpson~SampleType, data=ps_simp) #significant 
+TukeyHSD(anova_sampletype_simp, conf.level=.95) #sed. and fecal sig. differ 
+
+lm(data_simpson~PISA, data = ps_simp) %>% summary() #not significant 
+
+ggplot(ps_simp, aes(x = SampleType, y = data_simpson)) + theme_classic() + ylab('Simpson Index') + xlab('Source') + geom_boxplot() 
+```
+
+#Shannon's index
+```{r}
+data_shannon <- diversity(ps_ww@otu_table, index = "shannon") #extract shannon index values for each sample
+data_shannon <- data.frame(data_shannon) #make into a data frame
+data_shannon$SampleName <- rownames(data_shannon) #add sample names to df 
+ps_shan <- merge(data.frame(ps_ww@sam_data), data_shannon, by = "SampleName") #Dataframe with metadata + shannon indices 
+
+ps.shan.fecal <- ps_shan[ps_shan$SampleType %in% 'Fecal',] #subset for fecal, water, sediment 
+ps.shan.water <- ps_shan[ps_shan$SampleType %in% 'Water',]
+ps.shan.sediment <- ps_shan[ps_shan$SampleType %in% 'Sediment',]
+
+```
+
+### Fecal
+
+#### Shannons index between urbanization levels 
+```{r}
+#test assumptions of ANOVA 
+#test for equality of variance of the residuals
+bartlett.test(residuals(aov(data_shannon~Urbanization, data = ps.shan.fecal)), ps.shan.fecal$Urbanization) #variances are equal -- cannot reject null 
+
+#test for normality of distribution of the residuals 
+shapiro.test(residuals(aov(data_shannon~Urbanization, data = ps.shan.fecal))) #null rejected, but too stringent 
+qqnorm(residuals(aov(data_shannon~Urbanization, data = ps.shan.fecal))) #run in console!! looks pretty normally distributed 
+qqline(residuals(aov(data_shannon~Urbanization, data = ps.shan.fecal)))
+
+#ANOVA test- fecal alpha diversity 
+aov(data_shannon~Urbanization, data = ps.shan.fecal) %>% summary() # not significant !! 
+aov(data_shannon~Urbanization*HostSpecies, data = ps.shan.fecal) %>% summary() # not significant !! 
+aov(data_shannon~Urbanization, data = ps.shan.fecal) %>% TukeyHSD()
+#Linear model of alpha diversity and PISA 
+lm(data_shannon~PISA, data = ps_shan) %>% summary() # also not significant 
+
+
+#Fecal alpha diversity boxplot
+
+ps.shan.fecal$Urbanization <- factor(ps.shan.fecal$Urbanization, levels = c('Low', 'Medium', 'High'),ordered = T)
+
+ggplot(ps.shan.fecal, aes(x = Urbanization, y = data_shannon)) + theme_classic() + ylab('Shannon Index- Fecal') + xlab('Urbanization Level') + geom_boxplot() 
+```
+
+#### Simpsons index between urbanization levels 
+```{r}
+#test assumptions of ANOVA 
+#test for equality of variance of the residuals
+bartlett.test(residuals(aov(data_simpson~Urbanization, data = ps.simp.fecal)), ps.simp.fecal$Urbanization) #variances are not equal-- reject null 
+
+#test for normality of distribution of the residuals 
+shapiro.test(residuals(aov(data_simpson~Urbanization, data = ps.simp.fecal))) #null rejected, but too stringent 
+qqnorm(residuals(aov(data_simpson~Urbanization, data = ps.simp.fecal))) #run in console!! does not look normally distributed 
+qqline(residuals(aov(data_simpson~Urbanization, data = ps.simp.fecal)))
+
+#ANOVA test- fecal alpha diversity 
+aov(data_simpson~Urbanization, data = ps.simp.fecal) %>% summary() # assumptions not met- also not significant !! 
+kruskal.test(data_simpson~Urbanization, data = ps.simp.fecal)  # non parametric, not significant !! 
+
+#Linear model of alpha diversity and PISA 
+lm(data_simpson~PISA, data = ps.simp.fecal) %>% summary() # also not significant 
+
+#Fecal alpha diversity boxplot
+ggplot(ps.simp.fecal, aes(x = Urbanization, y = data_simpson)) + theme_classic() + ylab('Simpson Index- Fecal') + xlab('Urbanization Level') + geom_boxplot() 
+```
+
+
+### Water
+
+#### Shannons index between urbanization levels 
+```{r}
+#test assumptions of ANOVA 
+#test for equality of variance of the residuals
+bartlett.test(residuals(aov(data_shannon~Urbanization, data = ps.shan.water)), ps.shan.water$Urbanization) #variances are equal -- cannot reject null 
+
+#test for normality of distribution of the residuals 
+shapiro.test(residuals(aov(data_shannon~Urbanization, data = ps.shan.water))) #null rejected, but too stringent-- sooo close  
+qqnorm(residuals(aov(data_shannon~Urbanization, data = ps.shan.water))) #looks pretty normally distributed 
+qqline(residuals(aov(data_shannon~Urbanization, data = ps.shan.water))) 
+
+#ANOVA test- water alpha diversity
+aov(data_shannon~Urbanization, data = ps.shan.water) %>% summary() #not significant 
+
+#Water alpha diversity box plot -- urbanization
+ps.shan.water$Urbanization <- factor(ps.shan.water$Urbanization, levels = c('Low', 'Medium', 'High'),ordered = T)
+
+ggplot(ps.shan.water, aes(x = Urbanization, y = data_shannon)) + theme_classic() + ylab('Shannon Index- Water') + xlab('Urbanization Level') + geom_boxplot() 
+lm(data_shannon~PISA, data = ps.shan.water) %>% summary()
+
+#water alpha diversity plot -- PISA (don't use)
+ggplot(ps.shan.water, aes(x=PISA, y=data_shannon)) +
+  geom_point() +
+  geom_smooth(method=lm , color="red", se=FALSE) + ylab('Shannon Index') + theme_classic()
+```
+
+#### Simpsons index between urbanization levels 
+```{r}
+#test assumptions of ANOVA 
+#test for equality of variance of the residuals
+bartlett.test(residuals(aov(data_simpson~Urbanization, data = ps.simp.water)), ps.simp.water$Urbanization) #variances are not equal-- reject null 
+
+#test for normality of distribution of the residuals 
+shapiro.test(residuals(aov(data_simpson~Urbanization, data = ps.simp.water))) #null rejected
+
+#ANOVA test- fecal alpha diversity 
+aov(data_simpson~Urbanization, data = ps.simp.water) %>% summary() # assumptions not met- also not significant !! 
+kruskal.test(data_simpson~Urbanization, data = ps.simp.water)  # non parametric, not significant !! 
+
+#Linear model of alpha diversity and PISA 
+lm(data_simpson~PISA, data = ps.simp.water) %>% summary() # also not significant 
+
+#Alpha diversity boxplot
+ggplot(ps.simp.water, aes(x = Urbanization, y = data_simpson)) + theme_classic() + ylab('Simpson Index- water') + xlab('Urbanization Level') + geom_boxplot() 
+```
+
+
+### Sediment
+
+#### Shannons index between urbanization levels 
+```{r}
+#test assumptions of ANOVA 
+#test for equality of variance of the residuals
+bartlett.test(residuals(aov(data_shannon~Urbanization, data = ps.shan.sediment)), ps.shan.sediment$Urbanization)
+#variances are equal -- cannot reject null 
+
+#test for normality of distribution of the residuals 
+shapiro.test(residuals(aov(data_shannon~Urbanization, data = ps.shan.sediment))) #cannot reject null
+
+#ANOVA test - sediment alpha diversity 
+aov(data_shannon~Urbanization, data = ps.shan.sediment) %>% summary()
+
+#water alpha diversity plots- Urbanization and PISA
+ps.shan.sediment$Urbanization <- factor(ps.shan.sediment$Urbanization, levels = c('Low', 'Medium', 'High'),ordered = T)
+
+ggplot(ps.shan.sediment, aes(x = Urbanization, y = data_shannon)) + theme_classic() + ylab('Shannon Index- Sediment') + xlab('Urbanization Level') + geom_boxplot()
+lm(data_shannon~PISA, data = ps.shan.sediment) %>% summary()
+
+ggplot(ps.shan.sediment, aes(x=PISA, y=data_shannon)) +
+  geom_point() +
+  geom_smooth(method=lm , color="red", se=FALSE) + ylab('Shannon Index') + theme_classic()
+```
+
+#### Simpsons index between urbanization levels 
+```{r}
+#test assumptions of ANOVA 
+#test for equality of variance of the residuals
+bartlett.test(residuals(aov(data_simpson~Urbanization, data = ps.simp.sediment)), ps.simp.sediment$Urbanization) #variances are equal-- cannot reject null 
+
+#test for normality of distribution of the residuals 
+shapiro.test(residuals(aov(data_simpson~Urbanization, data = ps.simp.sediment))) #null rejected, but too stringent
+qqnorm(residuals(aov(data_simpson~Urbanization, data = ps.simp.sediment))) #run in console!! does not look normally distributed 
+qqline(residuals(aov(data_simpson~Urbanization, data = ps.simp.sediment)))
+
+#ANOVA test- sediment alpha diversity 
+aov(data_simpson~Urbanization, data = ps.simp.sediment) %>% summary() #assumptions not met- also not significant !! 
+kruskal.test(data_simpson~Urbanization, data = ps.simp.sediment)  # non parametric, not significant !! 
+
+#Linear model of alpha diversity and PISA 
+lm(data_simpson~PISA, data = ps.simp.sediment) %>% summary() # also not significant 
+
+#alpha diversity boxplot
+ggplot(ps.simp.sediment, aes(x = Urbanization, y = data_simpson)) + theme_classic() + ylab('Simpson Index- Sediment') + xlab('Urbanization Level') + geom_boxplot() 
+```
+
+
+***
+
+
+## Beta Diversity -- PERMANOVA, NMDS plots 
+
+### All samples-- by source
+```{r}
+#PERMANOVA model for source 
+adonis2(ps_ww@otu_table~ps_ww@sam_data$SampleType + ps_ww@sam_data$SampleType:ps_ww@sam_data$Urbanization, method = "bray")
+
+#posthocs for PERMANOVA 
+all_bray <- vegdist(ps_ww@otu_table, method ="bray") #extract bray distance matrix 
+#pairwise comparisons of treatment groups 
+posthoc_result_all <- pairwise.adonis(all_bray, ps_ww@sam_data$SampleType, p.adjust.m = 'BH')
+posthoc_result_all #all significant 
+
+#NMDS plot 
+ps.prop <- transform_sample_counts(ps_ww, function(otu) otu/sum(otu))
+ord.nmds.bray.all <- ordinate(ps_ww, method="NMDS", distance="bray")
+plot_ordination(ps.prop, ord.nmds.bray.all, color="SampleType", title="Bray NMDS", label = "SampleName") + stat_ellipse() + theme_classic()
+
+plot_ordination(ps.prop, ord.nmds.bray.all, color="PISA", title="Bray NMDS", label = "SampleName")
+```
+
+### Fecal
+
+```{r}
+#PERMANOVA models for fecal
+adonis2(ps.fecal@otu_table~ps.fecal@sam_data$PISA, method = "bray")
+
+adonis2(ps.fecal@otu_table~ps.fecal@sam_data$Urbanization, method = "bray") #interaction is signifcant!! Cannot get whole model to run though  
+
+adonis2(ps.fecal@otu_table~ ps.fecal@sam_data$Urbanization * ps.fecal@sam_data$HostSpecies, method = "bray", permutations = 1000,by = "terms")
+
+#Regression model- PISA
+pisa_poop <- adonis2(ps.fecal@otu_table~ps.fecal@sam_data$PISA, method = "bray")
+
+#posthocs for PERMANOVA 
+poop_bray <- vegdist(ps.fecal@otu_table, method ="bray") #extract bray distance matrix 
+#pairwise comparisons of treatment groups 
+posthoc_result_urb <- pairwise.adonis(poop_bray, ps.fecal@sam_data$Urbanization, p.adjust.m = 'BH')
+posthoc_result_urb
+posthoc_result_host <- pairwise.adonis(poop_bray, ps.fecal@sam_data$HostSpecies, p.adjust.m = 'BH')
+posthoc_result_host
+
+#NMDS plots 
+
+#ps.prop.fecal<- transform_sample_counts(ps.fecal, function(otu) otu/sum(otu))
+ord.nmds.bray.fecal <- ordinate(ps.fecal, method="NMDS", distance="bray")
+
+#Urbanizaton
+plot_ordination(ps.fecal, ord.nmds.bray.fecal, color="Urbanization", title="Bray NMDS", label = "SampleName") + stat_ellipse() + theme_classic() + scale_color_viridis(discrete = T, option = "D", end = 0.75) 
+
+#PISA 
+plot_ordination(ps.fecal, ord.nmds.bray.fecal, color="PISA", shape = "Site") + scale_shape_manual(values=1:7) + scale_color_gradient(low="blue", high="red")
+
+#Site Type 
+plot_ordination(ps.fecal, ord.nmds.bray.fecal, color="SiteType", label = "SampleName") + scale_color_viridis(discrete = T, option = "C", begin = 0.5, end = 0.8) + scale_fill_viridis(discrete = T, option = "C", begin = 0.5, end = 0.8) + stat_ellipse(type = "t") + theme_classic()
+
+#Host Species 
+plot_ordination(ps.fecal, ord.nmds.bray.fecal, color="HostSpecies", label = "SampleName") + stat_ellipse() + theme_classic() + scale_color_viridis(discrete = T, option = "D", end = 0.65) 
+```
+
+### Water
+
+```{r}
+#PERMANOVA models for water
+adonis2(ps.water@otu_table~ps.water@sam_data$Urbanization * ps.water@sam_data$SiteType, method = "bray")
+adonis2(ps.water@otu_table~ps.water@sam_data$Urbanization, method = "bray")
+adonis2(ps.water@otu_table~ps.water@sam_data$SiteType, method = "bray")
+adonis2(ps.water@otu_table~ps.water@sam_data$PISA, method = "bray")
+
+#posthocs for PERMANOVA -- urbanization 
+water_bray <- vegdist(ps.water@otu_table, method ="bray")
+pair_ad_w <- pairwise.adonis(water_bray, ps.water@sam_data$Urbanization, p.adjust.m = 'BH')
+pair_ad_w
+
+
+#NMDS plots 
+ps.prop.water <- transform_sample_counts(ps.water, function(otu) otu/sum(otu))
+ord.nmds.bray <- ordinate(ps.prop.water, method="NMDS", distance="bray")
+
+plot_ordination(ps.prop.water, ord.nmds.bray, color="Urbanization", label = "SampleName") + stat_ellipse() + theme_classic() #urbanization 
+
+plot_ordination(ps.prop.water, ord.nmds.bray, color="PISA", label = "SampleName") #PISA
+
+plot_ordination(ps.prop.water, ord.nmds.bray, color="SiteType", label = "SampleName") + stat_ellipse() + theme_classic() #Site type 
+```
+
+### Sediment
+
+```{r}
+#PERMANOVA model for sediment (Urbanization + PISA)
+adonis2(ps.sediment@otu_table~ps.sediment@sam_data$Urbanization, method = "bray", permutations = 1000)
+adonis2(ps.sediment@otu_table~ps.sediment@sam_data$PISA, method = "bray", permutations = 1000)
+
+#posthoc for PERMANOVA
+sed_bray <- vegdist(ps.sediment@otu_table, method ="bray")
+pair_ad_s <- pairwise.adonis(sed_bray, ps.sediment@sam_data$Urbanization, p.adjust.m = 'BH')
+pair_ad_s
+
+#NMDS plots-- urbanization and PISA
+ps.prop.sed <- transform_sample_counts(ps.sediment, function(otu) otu/sum(otu))
+ord.nmds.bray.sed <- ordinate(ps.prop.sed, method="NMDS", distance="bray")
+
+plot_ordination(ps.prop.sed, ord.nmds.bray.sed, color="Urbanization", label = "SampleName") + stat_ellipse() + theme_classic()
+
+plot_ordination(ps.prop.sed, ord.nmds.bray.sed, color="PISA", title="Bray NMDS", label = "SampleName") + theme_classic()
+
+```
+
+***
+
+# Top 20 OTU's:
+
+## Fecal 
+
+```{r}
+fecal_genus <- subset_taxa(ps.fecal, Genus !="NA") # remove NAs at genus level 
+
+top20 <- names(sort(taxa_sums(fecal_genus), decreasing=TRUE))[1:20]
+ps.top20 <- transform_sample_counts(fecal_genus, function(OTU) OTU/sum(OTU))
+ps.top20 <- prune_taxa(top20, ps.top20)
+```
+
+## Sediment
+
+```{r}
+sed_genus <- subset_taxa(ps.sediment, Genus != 'NA') # remove NAs at genus level 
+top20_sed <- names(sort(taxa_sums(sed_genus), decreasing=TRUE))[1:20]
+ps.top20_sed <- transform_sample_counts(sed_genus, function(OTU) OTU/sum(OTU))
+ps.top20_sed <- prune_taxa(top20_sed, ps.top20_sed)
+```
+
+## Water:
+
+```{r}
+water_genus <- subset_taxa(ps.water, Genus !="NA")  # remove NAs at genus level 
+
+top20_water <- names(sort(taxa_sums(water_genus), decreasing=TRUE))[1:20] #sort and pull the top 20 names 
+ps.top20_water <- transform_sample_counts(water_genus, function(OTU) OTU/sum(OTU)) #relative abundance 
+top20_water <- names(sort(taxa_sums(ps.top20_water), decreasing=TRUE))[1:20]
+ps.top20_water <- prune_taxa(top20_water, ps.top20_water)
+```
+
+
+## Plotting top 20 Genus
+
+```{r}
+#top 20 of each source -- not all data combined 
+
+ps.top20_source <- rbind(psmelt(ps.top20), psmelt(ps.top20_water), psmelt(ps.top20_sed))
+ps.top20_source <- ps.top20_source %>% group_by(OTU, SampleType, Genus) %>% summarise(Abundance = sum(Abundance))
+ps.top20_source$Genus <- gsub(ps.top20_source$Genus, pattern = 'g__', replacement = '')
+
+ps.top20_genus <- ps.top20_source %>% group_by(SampleType, Genus) %>% summarise(Abundance = sum(Abundance))
+ps.top20_genus <- ps.top20_genus[ps.top20_genus$Abundance >0, ]
+pivot_wider(ps.top20_genus , names_from = SampleType, values_from = Abundance)
+
+ggplot(ps.top20_genus, aes(x= SampleType,  fill=Genus, y = Abundance)) + 
+  geom_bar(aes(color = Genus, fill = Genus), stat="identity", position="fill") +
+  labs(x = "Source", y = "Relative Abundance\n") + theme_classic()
+
+pivot_wider(ps.all.present , names_from = Genus, values_from = Abundance)
+```
+
+***
+
+```{r}
+#subset medium samples out 
+ps.fecal_no_med <- subset_samples(ps.fecal, Urbanization != 'Medium')
+
+diagdds.fecal = phyloseq_to_deseq2(ps.fecal_no_med, ~ Urbanization) #converts to DESeq format from phyloseq
+diagdds.fecal = DESeq(diagdds.fecal)
+
+res.fecal = results(diagdds.fecal, contrast = c("Urbanization", "Low", "High"))
+alpha = 0.1
+res.fecal
+
+sigtab.fecal = res.fecal[which(res.fecal$padj < alpha), ]
+sigtab.fecal = cbind(as(sigtab.fecal, "data.frame"), as(tax_table(ps.fecal)[rownames(sigtab.fecal), ], "matrix"))
+sigtab.fecal$log2FoldChange < 2 
+sigtab.fecal
+```
+
+```{r}
+plotCounts(diagdds.fecal, gene=, intgroup="Urbanization", returnData = T)
+
+ggplot(sigtab.fecal, aes(x=Family, y=log2FoldChange, color=Phylum)) +
+    geom_jitter(size=3, width = 0.2) +
+    theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))
+
+sigtab.fecal[sigtab.fecal$log2FoldChange %in% max(sigtab.fecal$log2FoldChange),] #Basidiobolus magnus!!
+sigtab.fecal[sigtab.fecal$log2FoldChange %in% min(sigtab.fecal$log2FoldChange),]
+
+```
+#Fecal sig. positive log2changes 
+```{r}
+sig.fecal.ASV.pos <- rownames(sigtab.fecal[sigtab.fecal$log2FoldChange > 2, ])
+sig.fecal.tax.pos <- ps.fecal@tax_table[rownames(ps.fecal@tax_table) %in% sig.fecal.ASV.pos,]
+sig.fecal.tax.pos
+sig.fecal.tax.pos.df <- as.data.frame(sig.fecal.tax.pos)
+sig.fecal.tax.pos.df
+table(sig.fecal.tax.pos[,4]) %>% sort
+sigtab.fecal.pos.df <- sigtab.fecal[,c(2,6:13)]
+sigtab.fecal.pos.df <- subset(sigtab.fecal.pos.df, padj <= 0.05)
+sigtab.fecal.pos.df <- subset(sigtab.fecal.pos.df, log2FoldChange >= 2)
+sigtab.fecal.pos.df
+
+#look at ones that are resolved below Phylum level 
+sigtab.fecal.pos.df <- sigtab.fecal.pos.df[!is.na(sigtab.fecal.pos.df$Phylum),]
+
+counts(sigtab.fecal.pos.df, normalized=TRUE)
+
+lapply(1:20, function (x) {
+  plotCounts(diagdds.fecal, gene=rownames(sigtab.fecal.pos.df)[x], intgroup="Urbanization", returnData = T) %>% group_by(Urbanization) %>% dplyr::summarize(mean=mean(count)) %>% select(mean)
+}) %>% do.call(cbind, .)
+
+
+ggplot(sigtab.fecal.pos.df, aes(x=Genus, y=log2FoldChange, color=Phylum)) +
+    geom_jitter(size=3, width = 0.2) +
+    theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))
+```
+
+#Fecal sig. negative log2changes 
+```{r}
+sig.fecal.ASV.neg <- rownames(sigtab.fecal[sigtab.fecal$log2FoldChange < -2, ])
+sig.fecal.tax.neg <- ps.fecal@tax_table[rownames(ps.fecal@tax_table) %in% sig.fecal.ASV.neg,]
+sig.fecal.tax.neg
+table(sig.fecal.tax.neg[,4]) %>% sort
+sigtab.fecal.neg.df <- sigtab.fecal[,c(2,6:13)]
+sigtab.fecal.neg.df <- subset(sigtab.fecal.neg.df, padj <= 0.05)
+sigtab.fecal.neg.df <- subset(sigtab.fecal.neg.df, log2FoldChange <= -2)
+
+# remove na at phylum level 
+sigtab.fecal.neg.df <- sigtab.fecal.neg.df[!is.na(sigtab.fecal.neg.df$Phylum),]
+sigtab.fecal.neg.df
+
+ggplot(sigtab.fecal.neg.df, aes(x=Family, y=log2FoldChange, color=Phylum)) +
+    geom_jitter(size=3, width = 0.2) +
+    theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))
+```
+
+#Fecal sig. log2changes ALL
+```{r}
+sigtab.fecal.total.df <- sigtab.fecal[,c(2,6:13)]
+sigtab.fecal.total.df <- subset(sigtab.fecal.total.df, padj <= 0.05)
+sigtab.fecal.total.df <- subset(sigtab.fecal.total.df, log2FoldChange <= -2 | log2FoldChange >= 2)
+sigtab.fecal.total.df
+ggplot(sigtab.fecal.total.df, aes(x=Family, y=log2FoldChange, color=Phylum)) +
+    geom_jitter(size=3, width = 0.2) +
+    theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))
+
+pos.top20.fecal <- sigtab.fecal.pos.df[order(sigtab.fecal.pos.df$log2FoldChange,decreasing = TRUE)[c(1:30)],]#save top20 pos
+neg.top20.fecal <- sigtab.fecal.neg.df[order(sigtab.fecal.neg.df$log2FoldChange,decreasing = FALSE)[c(1:20)],]
+pos.top20.fecal
+sigtab.fecal.total.df
+
+lapply(1:20, function (x) {
+  plotCounts(diagdds.fecal, gene=rownames(pos.top20.fecal)[x], intgroup="Urbanization", returnData = T) %>% group_by(Urbanization) %>% dplyr::summarize(mean=mean(count)) %>% select(mean)
+}) %>% do.call(cbind, .)
+
+
+top.fecal.all <- rbind(pos.top20.fecal, neg.top20.fecal)
+top.fecal.all$name <- paste0(row.names(top.fecal.all), ":",top.fecal.all$Genus, " ", top.fecal.all$Species)
+
+ggplot(top.fecal.all, aes(x=Family, y=log2FoldChange, color=Phylum)) +
+    geom_jitter(size=3, width = 0.2) +
+    theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))
+
+ggplot(top.fecal.all, aes(x=name, y=log2FoldChange)) +
+      geom_bar(stat = "identity", position = "dodge", orientation = "") +
+    theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5)) + 
+  facet_grid(.~Phylum, space = "free", scale = "free_x")
+
+pos.top20.fecal
+top.fecal.all
+```
+
+
+#Fecal heat map 
+```{r}
+install.packages("pheatmap")
+library("pheatmap")
+select.fecal <- order(rowMeans(counts(diagdds.fecal,normalized=TRUE)),
+                decreasing=TRUE)[1:20] 
+
+ntd.fecal <- normTransform(diagdds.fecal)
+df.diag.fecal <- as.data.frame(colData(diagdds.fecal)[,c("Urbanization", "HostSpecies")])
+
+assay(ntd.fecal[rownames(ntd.fecal) %in% rownames(sigtab.fecal),])
+
+pheatmap(assay(ntd.fecal[select.fecal,]), cluster_rows=F, show_rownames=F, show_colnames = T, 
+         cluster_cols=TRUE, annotation_col=df.diag.fecal, clustering_method = 'complete', cutree_cols = 5,  annotation_colors = my_colour)  #Fecal heat map top20 positive ASVs 
+
+
+my_colour = list(
+    Urbanization = c(High = "dimgray", Low = "bisque", Medium ="darkkhaki" ), HostSpecies = c("Lithobates catesbeianus" = "darkgreen", "Lithobates clamitans" = "chartreuse3", "Lithobates palustris" = "darkolivegreen1"))
+
+ 
+```
+
+#Sediment 
+```{r}
+head(sample_data(ps.sediment)$Urbanization, 25)
+
+#subset medium samples out 
+ps.sed_no_med <- subset_samples(ps.sediment, Urbanization != 'Medium')
+
+diagdds.sed = phyloseq_to_deseq2(ps.sed_no_med, ~ Urbanization)
+diagdds.sed = DESeq(diagdds.sed)
+
+res.sed = results(diagdds.sed, contrast = c("Urbanization", "Low", "High"))
+res.sed
+alpha = 0.1
+sigtab.sed = res.sed[which(res.sed$padj < alpha), ]
+sigtab.sed = cbind(as(sigtab.sed, "data.frame"), as(tax_table(ps.sediment)[rownames(sigtab.sed), ], "matrix"))
+sigtab.sed
+
+plotCounts(diagdds.sed, gene= "ASV50", intgroup="Urbanization")
+
+ggplot(sigtab.sed, aes(x=Order, y=log2FoldChange, color=Phylum)) +
+    geom_jitter(size=3, width = 0.2) +
+    theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))
+
+sigtab.sed[sigtab.sed$log2FoldChange %in% max(sigtab.sed$log2FoldChange),]#Hymenoscyphus
+sigtab.sed[sigtab.sed$log2FoldChange %in% min(sigtab.sed$log2FoldChange),] #Pseudorhypophila
+```
+
+#Sediment sig. positive log2changes 
+```{r}
+sig.sed.ASV.pos <- rownames(sigtab.sed[sigtab.sed$log2FoldChange > 2, ])
+sig.sed.tax.pos <- ps.sediment@tax_table[rownames(ps.sediment@tax_table) %in% sig.sed.ASV.pos,]
+sig.sed.tax.pos
+table(sig.sed.tax.pos[,4]) %>% sort
+sigtab.sed.pos.df <- sigtab.sed[,c(2,6:13)]
+sigtab.sed.pos.df <- subset(sigtab.sed.pos.df, padj <= 0.05)
+sigtab.sed.pos.df <- subset(sigtab.sed.pos.df, log2FoldChange >= 2)
+sigtab.sed.pos.df
+sigtab.sed.pos.df <- sigtab.sed.pos.df[!is.na(sigtab.sed.pos.df$Phylum),] #get rid of ASVs with no phylum assignment 
+sigtab.sed.pos.df
+
+ggplot(sigtab.sed.pos.df, aes(x=Family, y=log2FoldChange, color=Phylum)) +
+    geom_jitter(size=3, width = 0.2) +
+    theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))
+```
+
+#Sediment sig. negative log2changes 
+```{r}
+sig.sed.ASV.neg <- rownames(sigtab.sed[sigtab.sed$log2FoldChange < -2, ]) 
+sig.sed.tax.neg <- ps.sediment@tax_table[rownames(ps.sediment@tax_table) %in% sig.sed.ASV.neg,]
+sig.sed.tax.neg
+table(sig.sed.tax.neg[,4]) %>% sort
+sigtab.sed.neg.df <- sigtab.sed[,c(2,6:13)]
+sigtab.sed.neg.df <- subset(sigtab.sed.neg.df, padj <= 0.05)
+sigtab.sed.neg.df <- subset(sigtab.sed.neg.df, log2FoldChange <= -2)
+sigtab.sed.neg.df
+sigtab.sed.neg.df <- sigtab.sed.neg.df[!is.na(sigtab.sed.neg.df$Phylum),]
+sigtab.sed.neg.df
+ggplot(sigtab.sed.neg.df, aes(x=Family, y=log2FoldChange, color=Phylum)) +
+    geom_jitter(size=3, width = 0.2) +
+    theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5)) #Mostly Ascomycota
+```
+
+#Sediment sig. log2changes ALL
+```{r}
+sigtab.sed.total.df <- sigtab.sed[,c(2,6:13)]
+sigtab.sed.total.df <- subset(sigtab.sed.total.df, padj <= 0.05)
+sigtab.sed.total.df <- subset(sigtab.sed.total.df, log2FoldChange <= -2 | log2FoldChange >= 2)
+sigtab.sed.total.df
+ggplot(sigtab.sed.total.df, aes(x=Family, y=log2FoldChange, color=Phylum)) +
+    geom_jitter(size=3, width = 0.2) +
+    theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))
+
+
+pos.top20.sed <- sigtab.sed.pos.df[order(sigtab.sed.pos.df$log2FoldChange,decreasing = TRUE)[c(1:30)],]#save top20 pos
+neg.top20.sed <- sigtab.sed.neg.df[order(sigtab.sed.neg.df$log2FoldChange,decreasing = FALSE)[c(1:30)],] #save top20 neg
+
+pos.top20.sed 
+neg.top20.sed
+
+top.sed.all <- rbind(pos.top20.sed, neg.top20.sed)
+top.sed.all$name <- paste0(row.names(top.sed.all), ":",top.sed.all$Genus, " ", top.sed.all$Species)
+
+```
+
+#Sediment heat map 
+```{r}
+select.sed <- order(rowMeans(counts(diagdds.sed,normalized=TRUE)),
+                decreasing=TRUE)[1:42] #ALL sed
+ntd.sed <- normTransform(diagdds.sed)
+df.diag.sed <- as.data.frame(colData(diagdds.sed)["Urbanization"])
+
+pheatmap(assay(ntd.sed[rownames(ntd.sed) %in% rownames(sigtab.sed),])
+, cluster_rows=T, show_rownames=T,
+         cluster_cols=FALSE, annotation_col=df.diag.sed, clustering_method = 'complete')
+
+pheatmap(assay(ntd.sed[select.sed,]), cluster_rows=F, show_rownames=FALSE,
+         cluster_cols=T, annotation_col=df.diag.sed, clustering_method = 'complete')
+
+
+```
+
+#Water 
+```{r}
+head(sample_data(ps.water)$Urbanization, 25)
+#subset medium samples out 
+ps.water_no_med <- subset_samples(ps.water, Urbanization != 'Medium')
+
+diagdds.water = phyloseq_to_deseq2(ps.water_no_med, ~ Urbanization)
+diagdds.water = DESeq(diagdds.water)
+
+res.water = results(diagdds.water, contrast = c("Urbanization", "Low", "High"))
+alpha = 0.1
+res.water
+sigtab.water = res.water[which(res.water$padj < alpha), ]
+sigtab.water = cbind(as(sigtab.water, "data.frame"), as(tax_table(ps.water)[rownames(sigtab.water), ], "matrix"))
+sigtab.water
+
+plotCounts(diagdds.water, gene=which.min(res.water$padj), intgroup="Urbanization")
+
+ggplot(sigtab.water, aes(x=Order, y=log2FoldChange, color=Phylum)) +
+    geom_jitter(size=3, width = 0.2) +
+    theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))
+```
+
+#Water sig. positive log2changes
+```{r}
+sig.water.ASV.pos <- rownames(sigtab.water[sigtab.water$log2FoldChange > 2, ])
+sig.water.tax.pos <- ps.sediment@tax_table[rownames(ps.water@tax_table) %in% sig.water.ASV.pos,]
+sig.water.tax.pos
+table(sig.water.tax.pos[,4]) %>% sort
+sigtab.water.pos.df <- sigtab.water[,c(2,6:13)]
+sigtab.water.pos.df <- subset(sigtab.water.pos.df, padj <= 0.05)
+sigtab.water.pos.df <- subset(sigtab.water.pos.df, log2FoldChange >= 2)
+sigtab.water.pos.df
+sigtab.water.pos.df <- sigtab.water.pos.df[!is.na(sigtab.water.pos.df$Phylum),]
+
+sigtab.water.pos.df
+ggplot(sigtab.water.pos.df, aes(x=Family, y=log2FoldChange, color=Phylum)) +
+    geom_jitter(size=3, width = 0.2) +
+    theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))
+#sooo many NAs for water-- mostly Chytridiomycota
+```
+
+#Water sig. negative log2changes
+```{r}
+sig.water.ASV.neg <- rownames(sigtab.water[sigtab.water$log2FoldChange < -2, ])
+sig.water.tax.neg <- ps.sediment@tax_table[rownames(ps.water@tax_table) %in% sig.water.ASV.neg,]
+sig.water.tax.neg
+table(sig.water.tax.neg[,4]) %>% sort
+sigtab.water.neg.df <- sigtab.water[,c(2,6:13)]
+sigtab.water.neg.df <- subset(sigtab.water.neg.df, padj <= 0.05)
+sigtab.water.neg.df <- subset(sigtab.water.neg.df, log2FoldChange <= -2)
+sigtab.water.neg.df <- sigtab.water.neg.df[!is.na(sigtab.water.neg.df$Phylum),]
+
+sigtab.water.neg.df
+ggplot(sigtab.water.neg.df, aes(x=Family, y=log2FoldChange, color=Phylum)) +
+    geom_jitter(size=3, width = 0.2) +
+    theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))
+```
+#Water sig.log2changes ALL
+```{r}
+sigtab.water.total.df <- sigtab.water[,c(2,6:13)]
+sigtab.water.total.df <- subset(sigtab.water.total.df, padj <= 0.05)
+sigtab.water.total.df <- subset(sigtab.water.total.df, log2FoldChange <= -2 | log2FoldChange >= 2)
+sigtab.water.total.df
+
+pos.top20.water <- sigtab.water.pos.df[order(sigtab.water.pos.df$log2FoldChange,decreasing = TRUE)[c(1:40)],]#save top20 pos
+neg.top20.water <- sigtab.water.neg.df[order(sigtab.water.neg.df$log2FoldChange,decreasing = FALSE)[c(1:30)],] #save top20 neg
+
+neg.top20.water
+pos.top20.water
+
+top.water.all <- rbind(pos.top20.sed, neg.top20.sed)
+top.water.all$name <- paste0(row.names(top.water.all), ":",top.water.all$Genus, " ", top.water.all$Species)
+
+ggplot(sigtab.water.total.df, aes(x=Family, y=log2FoldChange, color=Phylum)) +
+    geom_jitter(size=3, width = 0.2) +
+    theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))
+pos.top20.water
+```
+
+#Water heat map
+
+```{r}
+select.water <- order(rowMeans(counts(diagdds.water,normalized=TRUE)),
+                decreasing=TRUE)[1:84] #water ALL
+ntd.water <- normTransform(diagdds.water)
+df.diag.water <- as.data.frame(colData(diagdds.water)[c("Urbanization", "SiteType")])
+
+pheatmap(assay(ntd.water)[select.water,], cluster_rows=F, show_rownames=F,
+         cluster_cols=T, annotation_col=df.diag.water, clustering_method = 'complete')
+```
+
+
+***
+
+# FUNGuild -- set up 
+```{r}
+tax.collapse <- apply(ps_ww@tax_table, 1, paste0, collapse = ";") %>% as.data.frame
+colnames(tax.collapse) <- "Taxonomy"
+fguild.df <- funguild_assign(tax.collapse)
+fguild.df <- data.frame("OTU" = rownames(tax.collapse), fguild.df)
+
+#saveRDS(fguild.df, file = '~/Watershed_Thesis/funguild.RDS')
+
+fguild.df <- readRDS('funguild.RDS')
+colnames(fguild.df)[1] <- 'OTU'
+```
+
+## Creating a super duper matrix with FUNGuild data:
+```{R}
+#ps.guild.fecal <- transform_sample_counts(ps.fecal, function(OTU) OTU/sum(OTU)) %>% psmelt
+#ps.guild.sediment <- transform_sample_counts(ps.sediment, function(OTU) OTU/sum(OTU)) %>% psmelt
+#ps.guild.water <- transform_sample_counts(ps.water, function(OTU) OTU/sum(OTU)) %>% psmelt
+
+#ps.df <- rbind(ps.guild.fecal, ps.guild.sediment, ps.guild.water)
+ps.df <- psmelt(ps_ww)
+ps.df <- merge(ps.df, fguild.df, by="OTU")
+```
+
+#FUNGuild ALL sources -- by urbanization
+```{R}
+ps.nonzero <- ps.df[ps.df$Abundance != 0,] #remove ASVs with abundances of 0 in samples 
+ps.nonzero <- ps.nonzero[!is.na(ps.nonzero$trophicMode),] #remove any taxa with NA for trophic mode 
+
+ps.nonzero$trophicMode[ps.nonzero$confidenceRanking %in% 'Possible'] <- 'Unknown' #anything with 'possible' condifence ranking, make its trophic mode 'unknown' 
+ps.nonzero$trophicMode[!ps.nonzero$trophicMode %in% c("Pathotroph", "Saprotroph", "Symbiotroph")] <- 'Unknown'#any trophic mode that isn't one of these three, make their trophic mode assignment 'unknown' 
+
+#create a df with the same infromation but without the unkown category 
+ps.nonzero_known <- ps.nonzero[ps.nonzero$trophicMode != 'Unknown',]
+ps.nonzero_known
+
+# sum OTUs by trophic mode and urbanization levels and site and sample type (or sample type depending on analysis)
+ps.nonzero.grouped <- ps.nonzero %>% group_by(Site, Urbanization, SampleType, trophicMode) %>% summarize(Abundance = sum(Abundance))
+
+ps.nonzero_known.grouped <- ps.nonzero_known %>% group_by(Site, Urbanization, SampleType, trophicMode) %>% summarize(Abundance = sum(Abundance))
+
+#now separate by source 
+ps.nonzero.fecal <- ps.nonzero.grouped[ps.nonzero.grouped$SampleType %in% 'Fecal',]
+ps.nonzero.sediment <- ps.nonzero.grouped[ps.nonzero.grouped$SampleType %in% 'Sediment',]
+ps.nonzero.water <- ps.nonzero.grouped[ps.nonzero.grouped$SampleType %in% 'Water',]
+
+ps.nonzero_known.fecal <- ps.nonzero_known.grouped[ps.nonzero_known.grouped$SampleType %in% 'Fecal',]
+ps.nonzero_known.sediment <- ps.nonzero_known.grouped[ps.nonzero_known.grouped$SampleType %in% 'Sediment',]
+ps.nonzero_known.water <- ps.nonzero_known.grouped[ps.nonzero_known.grouped$SampleType %in% 'Water',]
+
+#calculate relative abundances for each sample type 
+ps.nonzero.fecal$relal <- ps.nonzero.fecal$Abundance /(sum(ps.nonzero.fecal$Abundance))
+ps.nonzero.sediment$relal <- ps.nonzero.sediment$Abundance /(sum(ps.nonzero.sediment$Abundance))
+ps.nonzero.water$relal <- ps.nonzero.water$Abundance /(sum(ps.nonzero.water$Abundance))
+
+ps.nonzero_known.fecal$relal <- ps.nonzero_known.fecal$Abundance /(sum(ps.nonzero_known.fecal$Abundance))
+ps.nonzero_known.sediment$relal <- ps.nonzero_known.sediment$Abundance /(sum(ps.nonzero_known.sediment$Abundance))
+ps.nonzero_known.water$relal <- ps.nonzero_known.water$Abundance /(sum(ps.nonzero_known.water$Abundance))
+
+#subset each source by trophic modes 
+fecal.path <- ps.nonzero_known.fecal[ps.nonzero_known.fecal$trophicMode %in% c("Pathotroph"), ]
+fecal.symb <-  ps.nonzero_known.fecal[ps.nonzero_known.fecal$trophicMode %in% c("Symbiotroph"), ]
+fecal.sap <- ps.nonzero_known.fecal[ps.nonzero_known.fecal$trophicMode %in% c("Saprotroph"), ]
+
+sed.path <- ps.nonzero_known.sediment[ps.nonzero_known.sediment$trophicMode %in% c("Pathotroph"), ]
+sed.symb <- ps.nonzero_known.sediment[ps.nonzero_known.sediment$trophicMode %in% c("Symbiotroph"), ]
+sed.sap <- ps.nonzero_known.sediment[ps.nonzero_known.sediment$trophicMode %in% c("Saprotroph"), ]
+
+water.path <- ps.nonzero_known.water[ps.nonzero_known.water$trophicMode %in% c("Pathotroph"), ]
+water.symb <- ps.nonzero_known.water[ps.nonzero_known.water$trophicMode %in% c("Symbiotroph"), ]
+water.sap <- ps.nonzero_known.water[ps.nonzero_known.water$trophicMode %in% c("Saprotroph"), ]
+
+#now bind together 
+ps.group.relal <- rbind(ps.nonzero.fecal, ps.nonzero.sediment, ps.nonzero.water)
+ps.group_known.relal <- rbind(ps.nonzero_known.fecal, ps.nonzero_known.sediment, ps.nonzero_known.water)
+
+#re-order urbanization levels 
+ps.group.relal$Urbanization <- factor(ps.group.relal$Urbanization, levels = c('Low', 'Medium', 'High'),ordered = T)
+
+ps.group_known.relal$Urbanization <- factor(ps.group_known.relal$Urbanization, levels = c('Low', 'Medium', 'High'),ordered = T)
+```
+
+#FUNGuild stats 
+```{r}
+#I think I need to do this for each trophic mode individually 
+kruskal.test(Abundance~Urbanization, data = fecal.path) #2.89, 2, 0.235
+kruskal.test(Abundance~Urbanization, data = fecal.symb)#2.41, 2, 0.230
+kruskal.test(Abundance~Urbanization, data = fecal.sap) #2.25, 2, 0.325
+
+kruskal.test(relal~Urbanization, data = sed.path) #4.00, 2, 0.135
+kruskal.test(relal~Urbanization, data = sed.symb) #3.14, 2, 0.21
+kruskal.test(relal~Urbanization, data = sed.sap) #1.14, 2, 0.565
+
+wilcox.test(relal~Urbanization, data = water.path) # 12, 0.548
+wilcox.test(relal~Urbanization, data = water.symb) #5, 0.571
+wilcox.test(Abundance~Urbanization, data = water.sap) #12, 0.548
+
+kruskal.test(relal~Urbanization, data = water.path) # 0.6, 2, 0.7408
+kruskal.test(relal~Urbanization, data = water.symb) #1.778, 2, 0.4111
+kruskal.test(relal~Urbanization, data = water.sap) #5.8, 2, 0.05502
+
+head(fecal.path)
+```
+
+#FUNGuild plots 
+```{r}
+#boxplot
+ggplot(ps.group.relal, aes(x = Urbanization, y = relal, fill = trophicMode)) + 
+    geom_boxplot() + labs(x='Sample Type', y='Relative Abundance') + facet_grid(.~SampleType)#plot this 
+
+#barplot -- with unknowns 
+ggplot(ps.group.relal, aes(x=Urbanization, y=relal, fill=trophicMode))+
+  geom_bar(stat="identity", position = "fill", show.legend=TRUE)+
+   scale_fill_manual(values=c('#006600','#3399FF','#9900CC', '#FF6633')) + xlab("Urbanization Level") +ylab("Relative Abundance") +
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.text.x = element_text(size = 12), axis.ticks.x = element_blank(), axis.text.y = element_text(size = 12), axis.line.y.left = element_line(), axis.title.y = element_text(size = 14)) + facet_grid(.~SampleType) + labs(fill = "Trophic Mode") 
+
+#barplot -- without unknowns 
+ggplot(ps.group_known.relal, aes(x=Urbanization, y=relal, fill=trophicMode))+
+  geom_bar(stat="identity", position = "fill", show.legend=TRUE)+
+   scale_fill_manual(values=c('#006600','#3399FF','#9900CC')) + xlab("Urbanization Level") +ylab("Relative Abundance") +
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.text.x = element_text(size = 12), axis.ticks.x = element_blank(), axis.text.y = element_text(size = 12), axis.line.y.left = element_line(), axis.title.y = element_text(size = 14)) + facet_grid(.~SampleType) + labs(fill = "Trophic Mode") 
+#'#FF6633'
+#'
+#barplot
+ggplot(ps_nonzero_sub, aes(x = SampleType, y = Abundance , fill = trophicMode)) + 
+    geom_bar(position = 'fill', stat = "identity") + labs(x='Sample Type', y ='Relative Abundance') + scale_fill_discrete(name = "Trophic Mode") #remove multiple assignments
+
+```
+
+
+#Subsetting for FUNGuild by SOURCE
+```{R}
+#New object without abundances of zero 
+#ps_sub <- ps.df[ps.df$trophicMode %in% c("Pathotroph", "Saprotroph", "Symbiotroph"), ] 
+
+#Any taxa with 'possible' confidence ranking, rename trophicMode to Unknown 
+
+poop_funguild <- ps.df[ps.df$SampleType %in% "Fecal",]
+poop_funguild <- poop_funguild[poop_funguild$Abundance != 0,]
+poop_funguild <- subset(poop_funguild, confidenceRanking == 'Probable' | confidenceRanking == 'Highly Probable')
+ggplot(poop_funguild, aes(x = Urbanization, y = Abundance , fill = trophicMode)) + 
+    geom_bar(position = 'fill', stat = "identity") + labs(x='Urbanization level', y='Relative Abundance')
+#change all multiple assignments to the same name for further analyses? 
+
+poop_funguild_sub <- poop_funguild[poop_funguild$trophicMode %in% c("Pathotroph", "Saprotroph", "Symbiotroph"), ] 
+ggplot(poop_funguild_sub, aes(x = Urbanization, y = Abundance , fill = trophicMode)) + 
+    geom_bar(position = 'fill', stat = "identity") + labs(x='Urbanization level', y='Relative Abundance') + scale_fill_discrete(name = "Trophic Mode") + theme_bw()
+
+taxa_sums(poop_funguild_sub)
+top20 <- names(sort(taxa_sums(ps.water), decreasing=TRUE))[1:20] #USE THIS?? taxa_sums()
+#fecal rel. abundance plot 
+
+#confidenceRanking --- Probable or Highly Probable ONLY
+
+sed_funguild <- ps.df[ps.df$SampleType %in% "Sediment",]
+sed_funguild <- sed_funguild[sed_funguild$Abundance != 0,]
+sed_funguild <- subset(sed_funguild, confidenceRanking == 'Probable' | confidenceRanking == 'Highly Probable')
+ggplot(sed_funguild, aes(x = Urbanization, y = Abundance , fill = trophicMode)) + 
+    geom_bar(position = 'fill', stat = "identity") + labs(x='Urbanization level', y='Relative Abundance') #sed. rel. abundance plot
+
+sed_funguild_sub <- sed_funguild[sed_funguild$trophicMode %in% c("Pathotroph", "Saprotroph", "Symbiotroph"), ] 
+ggplot(sed_funguild_sub, aes(x = Urbanization, y = Abundance , fill = trophicMode)) + 
+    geom_bar(position = 'fill', stat = "identity") + labs(x='Urbanization level', y='Relative Abundance') + scale_fill_discrete(name = "Trophic Mode") + theme_bw()
+
+
+water_funguild <- ps.df[ps.df$SampleType %in% "Water",]
+water_funguild <- water_funguild[water_funguild$Abundance != 0,]
+water_funguild <- subset(water_funguild, confidenceRanking == 'Probable' | confidenceRanking == 'Highly Probable')
+ggplot(water_funguild, aes(x = Urbanization, y = Abundance , fill = trophicMode)) + 
+    geom_bar(position = 'fill', stat = "identity") + labs(x='Urbanization level', y='Relative Abundance') 
+
+water_funguild_sub <- water_funguild[water_funguild$trophicMode %in% c("Pathotroph", "Saprotroph", "Symbiotroph"), ]
+ggplot(water_funguild_sub, aes(x = Urbanization, y = Abundance , fill = trophicMode)) + 
+    geom_bar(position = 'fill', stat = "identity") + labs(x='Urbanization level', y='Relative Abundance') + scale_fill_discrete(name = "Trophic Mode") + theme_bw()
+
+```
+
+#Subsetting by trophic mode first
+```{R} 
+ps_sub_path <- ps.df[ps.df$trophicMode %in% c("Pathotroph"), ]
+ps_sub_path <- ps_sub_path[ps_sub_path$Abundance != 0,]
+ps_sub_path <- ps_sub_path[ps_sub_path$SampleType %in% c("Sediment"),]
+
+ps_sub_sap <- ps.df[ps.df$trophicMode %in% c("Saprotroph"), ]
+ps_sub_sap <- ps_sub_sap[ps_sub_sap$Abundance != 0,]
+ps_sub_sap <- ps_sub_sap[ps_sub_sap$SampleType %in% c("Sediment"),]
+
+ps_sub_symb <- ps.df[ps.df$trophicMode %in% c("Symbiotroph"), ]
+ps_sub_symb <- ps_sub_symb[ps_sub_symb$Abundance != 0,]
+ps_sub_symb <- ps_sub_symb[ps_sub_symb$SampleType %in% c("Sediment"),]
+
+ggplot(ps_sub, aes(x= Urbanization, y= Abundance, fill=SampleType)) + geom_boxplot() + scale_y_log10() + facet_wrap(.~trophicMode, scales = "free_y")
+
+lm(Abundance~Urbanization, data = ps_sub_sap) %>% summary() %>% aov()
+
+summary(aov(Abundance~Site, data = ps_sub_sap))
+TukeyHSD(aov(Abundance~Site, data = ps_sub_sap))
+boxplot(Abundance~Site, data = ps_sub_path)
+
+ps.nonzero <- ps.nonzero %>% group_by(Urbanization, trophicMode) 
+OTU.count <- ps.nonzero %>% count(OTU, Urbanization, trophicMode)
+
+summary(aov(Abundance~trophicMode, data=ps_sub_path))
+
+
+ggplot(OTU.count, aes(x= Urbanization, y= n, fill=Urbanization)) + geom_boxplot() + scale_y_log10() + facet_wrap(.~trophicMode, scales = "free_y")
+
+lm(Abundance~Urbanization*trophicMode, data = ps.df) %>% aov %>% summary()
+```
